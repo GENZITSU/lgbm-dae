@@ -21,18 +21,17 @@ merged_data = merged_data.drop(["id", "charges"], axis=1)
 merged_data["children"] = merged_data["children"].map(lambda x: str(x))
 
 # rankgauss & one hot & swap noise
-one_hot_noised_df,one_hot_df = preprocess(merged_data, num_cols, cat_cols)
+one_hot_df = preprocess(merged_data, num_cols, cat_cols)
 
 # train, test data
 train_x = one_hot_df.query("train == 1").drop("train", axis=1)
 test_x = one_hot_df.query("train == 0").drop("train", axis=1)
 
-# training dae
-train_dae(one_hot_noised_df, "cuda:9", "models/dae.model", cycle=300)
+train_dae(one_hot_df.drop("train", axis=1), "cuda:9", "models/dae.model", cycle=1000)
 
-# get representation
 train_x = get_representation(train_x.values, "models/dae.model")
 test_x =  get_representation(test_x.values, "models/dae.model")
+
 train_data_ = pd.DataFrame(train_x)
 train_data_["charges"] = train_y
 ```
