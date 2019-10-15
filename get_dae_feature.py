@@ -49,14 +49,18 @@ class AutoEncoder(nn.Module):
         return h
 
 
-def train(model, data_loader, loss_func, optimizer, device=torch.device("cpu")):
+def train(model, data_loader, loss_func, optimizer,
+            device=torch.device("cpu"), noise_level=0.2):
     model.train()
     running_loss = 0
     for row_data in data_loader:
         optimizer.zero_grad()
-        row_data = row_data.to(device)
-        outputs = model(row_data)
-        loss = loss_func(outputs, row_data)
+        noised_data = swap_noise(row_data.numpy(),
+                                    noise_level=noise_level)
+        noised_data = torch.from_numpy(noised_data)
+        noised_data = noised_data.to(device)
+        outputs = model(noised_data)
+        loss = loss_func(outputs, noised_data)
         running_loss += loss.item()
         loss.backward()
         optimizer.step()
@@ -93,32 +97,29 @@ def preprocess(merged_df, num_cols, cat_cols,
                                                 output_distribution="normal")
     merged_df[num_cols] = rankgauss_transformer.\
                                 fit_transform(merged_df[num_cols])
-    # one hot
-    noised_merged_df = pd.DataFrame(swap_noise(merged_df.values, noise_level),
-                                    columns=merged_df.columns)
-    one_hot_noised_merged_df = pd.get_dummies(noised_merged_df,
-                                        columns=cat_cols)
 
-    # 特徴量抽出用のdf
-    merged_df["train"] = train_flag
+    # one hot
     one_hot_merged_df = pd.get_dummies(merged_df, columns=cat_cols)
 
-    return one_hot_noised_merged_df, one_hot_merged_df
+    # flagを戻す
+    one_hot_merged_df["train"] = train_flag
+
+    return one_hot_merged_df
 
 
-def train_dae(noised_df, device_name, save_path,
+def train_dae(merged_df, device_name, save_path, noise_level=0.2,
               cycle = 300, output_size=100, batch_size=128, learning_rate=1e-3):
     '''dae用のモデルを訓練する
     '''
     # loader
-    dataset = TableData(noised_df.values.astype("float32"))
+    dataset = TableData(merged_df.values.astype("float32"))
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
     # gpu/cpu
     device = torch.device(device_name)
 
     # モデル
-    input_size = noised_df.values.shape[1]
+    input_size = merged_df.values.shape[1]
     dae_model = AutoEncoder(input_size, output_size)
     dae_model = dae_model.to(device)
 
@@ -131,44 +132,11 @@ def train_dae(noised_df, device_name, save_path,
     term = cycle / 10
     for i in range(cycle):
         if (i+1) % term == 0:
-            print(train(dae_model, loader, criterion, optimizer, device))
+            print(train(dae_model, loader, criterion, optimizer, device, noise_level))
     dae_model.to(torch.device("cpu"))
     torch.save(dae_model.state_dict(), save_path)
 
     return
-
-
-def train_dae(noised_df, device_name, save_path,
-              cycle = 300, output_size=100, batch_size=128, learning_rate=1e-3):
-    '''dae用のモデルを訓練する
-    '''
-    # loader
-    dataset = TableData(noised_df.values.astype("float32"))
-    loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
-
-    # gpu/cpu
-    device = torch.device(device_name)
-
-    # モデル
-    input_size = noised_df.values.shape[1]
-    dae_model = AutoEncoder(input_size, output_size)
-    dae_model = dae_model.to(device)
-
-    #Loss, Optimizer
-    criterion = nn.MSELoss()
-    optimizer = torch.optim.Adam(dae_model.parameters(),
-                                 lr=learning_rate)
-
-    # train
-    term = cycle / 10
-    for i in range(cycle):
-        if (i+1) % term == 0:
-            print(train(dae_model, loader, criterion, optimizer, device))
-    dae_model.to(torch.device("cpu"))
-    torch.save(dae_model.state_dict(), save_path)
-
-    return
-
 
 def get_representation(array, save_file, output_size=100):
     '''学習ずみdaeから特徴量抽出
